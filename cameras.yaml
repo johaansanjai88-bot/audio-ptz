@@ -1,0 +1,24 @@
+cameras:
+  - id: cam1
+    name: "Front Entrance"
+    ip: 192.168.1.100
+    port: 80
+    username: admin
+    password: changeme
+    rtsp_port: 554
+    rtsp_path: /stream1
+
+  - id: cam2
+    name: "Rear Parking"
+    ip: 192.168.1.101
+    port: 80
+    username: admin
+    password: changeme
+    rtsp_port: 554
+    rtsp_path: /stream1
+
+app:
+  host: 0.0.0.0
+  port: 5000
+  debug: false
+  secret_key: "change-this-secret-key"

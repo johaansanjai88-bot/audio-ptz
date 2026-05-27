@@ -1,0 +1,700 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>PTZ Camera Control</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Barlow+Condensed:wght@300;500;700&display=swap');
+
+  :root {
+    --bg: #0a0c10;
+    --surface: #111318;
+    --surface2: #181c24;
+    --border: #1f2733;
+    --accent: #00e5ff;
+    --accent2: #ff6b35;
+    --warn: #ffcc00;
+    --text: #c8d6e5;
+    --muted: #4a5568;
+    --green: #00ff88;
+    --red: #ff3860;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'Barlow Condensed', sans-serif;
+    font-weight: 300;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* Scanline overlay */
+  body::before {
+    content: '';
+    position: fixed; inset: 0;
+    background: repeating-linear-gradient(
+      0deg,
+      transparent,
+      transparent 2px,
+      rgba(0,0,0,0.08) 2px,
+      rgba(0,0,0,0.08) 4px
+    );
+    pointer-events: none;
+    z-index: 1000;
+  }
+
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 24px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+
+  .logo {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.1rem;
+    color: var(--accent);
+    letter-spacing: 3px;
+    text-transform: uppercase;
+  }
+
+  .status-bar {
+    display: flex; gap: 20px; align-items: center;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--green);
+    box-shadow: 0 0 8px var(--green);
+    animation: pulse 2s infinite;
+  }
+
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+
+  .main {
+    display: grid;
+    grid-template-columns: 280px 1fr 260px;
+    grid-template-rows: auto;
+    gap: 16px;
+    padding: 16px 20px;
+    max-width: 1400px;
+    margin: 0 auto;
+  }
+
+  /* ── Camera feed ── */
+  .feed-panel {
+    grid-column: 2;
+    grid-row: 1;
+  }
+
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    padding: 8px 14px;
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 0.72rem;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .panel-header .label { color: var(--accent); font-family: 'Share Tech Mono', monospace; }
+
+  .feed-box {
+    width: 100%;
+    aspect-ratio: 16/9;
+    background: #000;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .feed-box img {
+    width: 100%; height: 100%;
+    object-fit: cover;
+    display: block;
+  }
+
+  .feed-overlay {
+    position: absolute; inset: 0;
+    pointer-events: none;
+  }
+
+  .corner {
+    position: absolute;
+    width: 20px; height: 20px;
+    border-color: var(--accent);
+    border-style: solid;
+    opacity: 0.6;
+  }
+  .corner.tl { top: 10px; left: 10px; border-width: 2px 0 0 2px; }
+  .corner.tr { top: 10px; right: 10px; border-width: 2px 2px 0 0; }
+  .corner.bl { bottom: 10px; left: 10px; border-width: 0 0 2px 2px; }
+  .corner.br { bottom: 10px; right: 10px; border-width: 0 2px 2px 0; }
+
+  .crosshair {
+    position: absolute;
+    top: 50%; left: 50%;
+    transform: translate(-50%, -50%);
+    opacity: 0.3;
+  }
+  .crosshair::before, .crosshair::after {
+    content: ''; position: absolute;
+    background: var(--accent);
+  }
+  .crosshair::before { width: 30px; height: 1px; top: 0; left: -15px; }
+  .crosshair::after { width: 1px; height: 30px; top: -15px; left: 0; }
+
+  .feed-info {
+    position: absolute; bottom: 8px; left: 12px;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--accent);
+    opacity: 0.8;
+  }
+
+  /* ── PTZ Controls ── */
+  .control-panel { grid-column: 1; grid-row: 1 / 3; }
+
+  .dpad {
+    display: grid;
+    grid-template-columns: repeat(3, 60px);
+    grid-template-rows: repeat(3, 60px);
+    gap: 4px;
+    margin: 16px auto;
+    width: fit-content;
+  }
+
+  .btn {
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    border-radius: 3px;
+    color: var(--text);
+    cursor: pointer;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.1rem;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.1s;
+    user-select: none;
+  }
+
+  .btn:hover { background: var(--border); border-color: var(--accent); color: var(--accent); }
+  .btn:active { transform: scale(0.92); background: var(--accent); color: #000; }
+
+  .btn-home {
+    background: var(--surface2);
+    border-color: var(--accent);
+    color: var(--accent);
+    font-size: 0.6rem;
+    letter-spacing: 1px;
+  }
+
+  .btn.empty { visibility: hidden; }
+
+  .zoom-controls {
+    display: flex;
+    gap: 8px;
+    padding: 0 16px 16px;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .zoom-btn {
+    flex: 1;
+    height: 44px;
+    font-size: 1.4rem;
+  }
+
+  .zoom-label {
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-align: center;
+  }
+
+  .speed-row {
+    padding: 0 16px 16px;
+  }
+
+  .speed-row label {
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    display: block;
+    margin-bottom: 8px;
+  }
+
+  input[type=range] {
+    width: 100%;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  .speed-val {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--accent);
+    text-align: right;
+    margin-top: 4px;
+  }
+
+  /* ── Presets ── */
+  .presets-panel { grid-column: 3; grid-row: 1 / 3; }
+
+  .preset-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+    padding: 12px;
+  }
+
+  .preset-btn {
+    height: 50px;
+    border-radius: 3px;
+    flex-direction: column;
+    gap: 2px;
+    font-size: 0.9rem;
+  }
+
+  .preset-btn .num {
+    font-size: 1rem;
+    font-weight: 700;
+  }
+
+  .preset-btn .pname {
+    font-size: 0.55rem;
+    letter-spacing: 1px;
+    color: var(--muted);
+    font-family: 'Barlow Condensed', sans-serif;
+    max-width: 50px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .preset-btn.active {
+    border-color: var(--accent2);
+    color: var(--accent2);
+  }
+
+  .preset-actions {
+    display: flex;
+    gap: 8px;
+    padding: 0 12px 12px;
+  }
+
+  .btn-action {
+    flex: 1;
+    height: 36px;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+  }
+
+  /* ── Status ── */
+  .status-panel { grid-column: 2; grid-row: 2; }
+
+  .status-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 1px;
+    background: var(--border);
+  }
+
+  .stat-item {
+    background: var(--surface);
+    padding: 12px 16px;
+    text-align: center;
+  }
+
+  .stat-item .val {
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 1.4rem;
+    color: var(--accent);
+    display: block;
+  }
+
+  .stat-item .key {
+    font-size: 0.6rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+    margin-top: 2px;
+    display: block;
+  }
+
+  /* ── Camera selector ── */
+  .cam-select {
+    display: flex;
+    gap: 8px;
+    padding: 12px;
+    flex-wrap: wrap;
+  }
+
+  .cam-tab {
+    flex: 1;
+    min-width: 80px;
+    height: 36px;
+    font-size: 0.65rem;
+    letter-spacing: 1px;
+  }
+
+  .cam-tab.active {
+    background: var(--accent);
+    color: #000;
+    border-color: var(--accent);
+  }
+
+  /* ── Log ── */
+  .log-panel { grid-column: 1 / 4; }
+
+  .log-box {
+    padding: 10px 14px;
+    height: 100px;
+    overflow-y: auto;
+    font-family: 'Share Tech Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column-reverse;
+    gap: 2px;
+  }
+
+  .log-entry { display: flex; gap: 10px; }
+  .log-entry .ts { color: var(--accent); opacity: 0.5; min-width: 80px; }
+  .log-entry.ok .msg { color: var(--green); }
+  .log-entry.warn .msg { color: var(--warn); }
+  .log-entry.err .msg { color: var(--red); }
+
+  /* Tooltip */
+  [data-tip] { position: relative; }
+  [data-tip]::after {
+    content: attr(data-tip);
+    position: absolute; bottom: calc(100% + 6px);
+    left: 50%; transform: translateX(-50%);
+    background: var(--surface2);
+    border: 1px solid var(--border);
+    color: var(--text);
+    font-size: 0.6rem;
+    padding: 3px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+    letter-spacing: 1px;
+  }
+  [data-tip]:hover::after { opacity: 1; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">PTZ // CONTROL</div>
+  <div class="status-bar">
+    <div class="status-dot"></div>
+    <span id="conn-status">CONNECTED</span>
+    <span>|</span>
+    <span id="live-time">00:00:00</span>
+  </div>
+</header>
+
+<div class="main">
+
+  <!-- ── Left: PTZ Controls ── -->
+  <div class="panel control-panel">
+    <div class="panel-header">
+      <span class="label">PTZ CTRL</span>
+      <span id="active-cam-label">CAM1</span>
+    </div>
+
+    <div class="cam-select">
+      <button class="btn cam-tab active" onclick="selectCam('cam1', this)">CAM 1</button>
+      <button class="btn cam-tab" onclick="selectCam('cam2', this)">CAM 2</button>
+    </div>
+
+    <!-- D-Pad -->
+    <div class="dpad">
+      <div class="btn empty"></div>
+      <button class="btn" data-tip="TILT UP" onmousedown="startMove(0,1,0)" onmouseup="stopMove()" onmouseleave="stopMove()">▲</button>
+      <div class="btn empty"></div>
+      <button class="btn" data-tip="PAN LEFT" onmousedown="startMove(-1,0,0)" onmouseup="stopMove()" onmouseleave="stopMove()">◀</button>
+      <button class="btn btn-home" data-tip="HOME" onclick="goHome()">HOME</button>
+      <button class="btn" data-tip="PAN RIGHT" onmousedown="startMove(1,0,0)" onmouseup="stopMove()" onmouseleave="stopMove()">▶</button>
+      <div class="btn empty"></div>
+      <button class="btn" data-tip="TILT DOWN" onmousedown="startMove(0,-1,0)" onmouseup="stopMove()" onmouseleave="stopMove()">▼</button>
+      <div class="btn empty"></div>
+    </div>
+
+    <!-- Zoom -->
+    <div class="zoom-label">ZOOM</div>
+    <div class="zoom-controls">
+      <button class="btn zoom-btn" data-tip="ZOOM OUT" onmousedown="startMove(0,0,-1)" onmouseup="stopMove()" onmouseleave="stopMove()">−</button>
+      <button class="btn zoom-btn" data-tip="ZOOM IN" onmousedown="startMove(0,0,1)" onmouseup="stopMove()" onmouseleave="stopMove()">+</button>
+    </div>
+
+    <!-- Speed -->
+    <div class="speed-row">
+      <label>SPEED</label>
+      <input type="range" min="0.1" max="1.0" step="0.05" value="0.5" id="speed-slider" oninput="updateSpeed(this.value)">
+      <div class="speed-val" id="speed-val">0.50</div>
+    </div>
+  </div>
+
+  <!-- ── Center: Camera Feed ── -->
+  <div class="panel feed-panel">
+    <div class="panel-header">
+      <span class="label" id="feed-label">LIVE — CAM1</span>
+      <span id="feed-res">1920×1080</span>
+    </div>
+    <div class="feed-box">
+      <img id="stream-img" src="" alt="RTSP Stream" onerror="this.style.display='none'"/>
+      <canvas id="feed-canvas" style="position:absolute;inset:0;width:100%;height:100%;"></canvas>
+      <div class="feed-overlay">
+        <div class="corner tl"></div>
+        <div class="corner tr"></div>
+        <div class="corner bl"></div>
+        <div class="corner br"></div>
+        <div class="crosshair"></div>
+        <div class="feed-info" id="feed-info">● REC &nbsp; 00:00:00</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Status ── -->
+  <div class="panel status-panel">
+    <div class="panel-header"><span class="label">POSITION</span></div>
+    <div class="status-grid">
+      <div class="stat-item"><span class="val" id="stat-pan">0.00</span><span class="key">PAN</span></div>
+      <div class="stat-item"><span class="val" id="stat-tilt">0.00</span><span class="key">TILT</span></div>
+      <div class="stat-item"><span class="val" id="stat-zoom">1.0×</span><span class="key">ZOOM</span></div>
+      <div class="stat-item"><span class="val" id="stat-state" style="color:var(--green);font-size:0.8rem">IDLE</span><span class="key">STATE</span></div>
+    </div>
+  </div>
+
+  <!-- ── Right: Presets ── -->
+  <div class="panel presets-panel">
+    <div class="panel-header"><span class="label">PRESETS</span></div>
+    <div class="preset-grid" id="preset-grid">
+      <!-- Generated by JS -->
+    </div>
+    <div class="preset-actions">
+      <button class="btn btn-action" onclick="saveCurrentPreset()">SAVE POS</button>
+      <button class="btn btn-action" onclick="clearPreset()" style="border-color:var(--red);color:var(--red)">CLEAR</button>
+    </div>
+  </div>
+
+  <!-- ── Log ── -->
+  <div class="panel log-panel">
+    <div class="panel-header"><span class="label">EVENT LOG</span><span id="log-count">0 events</span></div>
+    <div class="log-box" id="log-box"></div>
+  </div>
+
+</div>
+
+<script>
+  const API = '/api'; // Flask API base
+  let activeCam = 'cam1';
+  let speed = 0.5;
+  let moveInterval = null;
+  let recTimer = null;
+  let recSeconds = 0;
+  let selectedPreset = null;
+  const presetNames = {};
+  let logCount = 0;
+
+  // ── Init ──
+  window.addEventListener('DOMContentLoaded', () => {
+    renderPresets();
+    startClock();
+    startRecTimer();
+    pollStatus();
+    setInterval(pollStatus, 2000);
+    log('System initialized', 'ok');
+    updateStreamSrc();
+  });
+
+  // ── Camera select ──
+  function selectCam(id, el) {
+    activeCam = id;
+    document.querySelectorAll('.cam-tab').forEach(b => b.classList.remove('active'));
+    el.classList.add('active');
+    document.getElementById('active-cam-label').textContent = id.toUpperCase();
+    document.getElementById('feed-label').textContent = `LIVE — ${id.toUpperCase()}`;
+    updateStreamSrc();
+    log(`Switched to ${id.toUpperCase()}`, 'ok');
+  }
+
+  function updateStreamSrc() {
+    document.getElementById('stream-img').src = `${API}/cameras/${activeCam}/stream`;
+    document.getElementById('stream-img').style.display = 'block';
+  }
+
+  // ── Move control ──
+  function startMove(pan, tilt, zoom) {
+    if (moveInterval) clearInterval(moveInterval);
+    sendMove(pan, tilt, zoom);
+    moveInterval = setInterval(() => sendMove(pan, tilt, zoom), 200);
+    document.getElementById('stat-state').textContent = 'MOVING';
+    document.getElementById('stat-state').style.color = 'var(--accent2)';
+  }
+
+  function stopMove() {
+    if (moveInterval) { clearInterval(moveInterval); moveInterval = null; }
+    fetch(`${API}/cameras/${activeCam}/stop`, { method: 'POST' });
+    document.getElementById('stat-state').textContent = 'IDLE';
+    document.getElementById('stat-state').style.color = 'var(--green)';
+  }
+
+  function sendMove(pan, tilt, zoom) {
+    fetch(`${API}/cameras/${activeCam}/move`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pan: pan * speed, tilt: tilt * speed, zoom: zoom * speed })
+    }).catch(() => {});
+  }
+
+  function goHome() {
+    fetch(`${API}/cameras/${activeCam}/home`, { method: 'POST' });
+    log(`${activeCam.toUpperCase()} → HOME`, 'ok');
+  }
+
+  function updateSpeed(val) {
+    speed = parseFloat(val);
+    document.getElementById('speed-val').textContent = speed.toFixed(2);
+  }
+
+  // ── Presets ──
+  function renderPresets() {
+    const grid = document.getElementById('preset-grid');
+    grid.innerHTML = '';
+    for (let i = 1; i <= 9; i++) {
+      const btn = document.createElement('button');
+      btn.className = 'btn preset-btn' + (selectedPreset === i ? ' active' : '');
+      btn.id = `preset-${i}`;
+      btn.innerHTML = `<span class="num">${i}</span><span class="pname">${presetNames[i] || '—'}</span>`;
+      btn.onclick = () => gotoPreset(i);
+      btn.oncontextmenu = (e) => { e.preventDefault(); selectPreset(i); };
+      grid.appendChild(btn);
+    }
+  }
+
+  function selectPreset(num) {
+    selectedPreset = num;
+    renderPresets();
+    log(`Preset ${num} selected`, 'warn');
+  }
+
+  function gotoPreset(num) {
+    selectPreset(num);
+    fetch(`${API}/cameras/${activeCam}/preset/${num}`, { method: 'POST' })
+      .then(() => log(`${activeCam.toUpperCase()} → PRESET ${num}`, 'ok'));
+  }
+
+  function saveCurrentPreset() {
+    if (!selectedPreset) { log('No preset selected — right-click to select', 'warn'); return; }
+    const name = prompt(`Name for preset ${selectedPreset}:`, presetNames[selectedPreset] || '');
+    if (name === null) return;
+    presetNames[selectedPreset] = name || `P${selectedPreset}`;
+    fetch(`${API}/cameras/${activeCam}/preset/${selectedPreset}/save`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: presetNames[selectedPreset] })
+    }).then(() => {
+      renderPresets();
+      log(`Saved PRESET ${selectedPreset}: "${presetNames[selectedPreset]}"`, 'ok');
+    });
+  }
+
+  function clearPreset() {
+    if (!selectedPreset) { log('No preset selected', 'warn'); return; }
+    if (!confirm(`Clear preset ${selectedPreset}?`)) return;
+    delete presetNames[selectedPreset];
+    renderPresets();
+    log(`Cleared PRESET ${selectedPreset}`, 'warn');
+  }
+
+  // ── Status polling ──
+  function pollStatus() {
+    fetch(`${API}/cameras/${activeCam}/status`)
+      .then(r => r.json())
+      .then(s => {
+        document.getElementById('stat-pan').textContent = (s.pan || 0).toFixed(2);
+        document.getElementById('stat-tilt').textContent = (s.tilt || 0).toFixed(2);
+        document.getElementById('stat-zoom').textContent = (s.zoom != null ? (1 + s.zoom * 9).toFixed(1) : '1.0') + '×';
+      }).catch(() => {});
+  }
+
+  // ── Clock ──
+  function startClock() {
+    setInterval(() => {
+      const now = new Date();
+      document.getElementById('live-time').textContent =
+        [now.getHours(), now.getMinutes(), now.getSeconds()]
+          .map(v => String(v).padStart(2, '0')).join(':');
+    }, 1000);
+  }
+
+  function startRecTimer() {
+    setInterval(() => {
+      recSeconds++;
+      const h = String(Math.floor(recSeconds / 3600)).padStart(2,'0');
+      const m = String(Math.floor((recSeconds % 3600) / 60)).padStart(2,'0');
+      const s = String(recSeconds % 60).padStart(2,'0');
+      document.getElementById('feed-info').textContent = `● REC   ${h}:${m}:${s}`;
+    }, 1000);
+  }
+
+  // ── Logging ──
+  function log(msg, type = '') {
+    logCount++;
+    document.getElementById('log-count').textContent = `${logCount} events`;
+    const now = new Date();
+    const ts = [now.getHours(), now.getMinutes(), now.getSeconds()]
+      .map(v => String(v).padStart(2,'0')).join(':');
+    const box = document.getElementById('log-box');
+    const entry = document.createElement('div');
+    entry.className = `log-entry ${type}`;
+    entry.innerHTML = `<span class="ts">${ts}</span><span class="msg">${msg}</span>`;
+    box.prepend(entry);
+    while (box.children.length > 50) box.removeChild(box.lastChild);
+  }
+
+  // Keyboard shortcuts
+  document.addEventListener('keydown', e => {
+    if (e.repeat) return;
+    const map = { ArrowLeft: [-1,0,0], ArrowRight: [1,0,0], ArrowUp: [0,1,0], ArrowDown: [0,-1,0], '+': [0,0,1], '-': [0,0,-1] };
+    const v = map[e.key];
+    if (v) { startMove(...v); e.preventDefault(); }
+    if (e.key === 'h' || e.key === 'H') goHome();
+  });
+
+  document.addEventListener('keyup', e => {
+    const keys = ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','+','-'];
+    if (keys.includes(e.key)) stopMove();
+  });
+</script>
+</body>
+</html>
